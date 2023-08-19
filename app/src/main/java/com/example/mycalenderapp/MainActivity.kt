@@ -34,7 +34,6 @@ import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,6 +51,7 @@ import com.example.mycalenderapp.ui.theme.MyCalenderAppTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
@@ -86,6 +86,15 @@ fun CalendarApp(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val memoList by db.memoDao().getAll()
         .collectAsState(initial = emptyList())
+
+    var selectedUid by remember {
+        mutableStateOf(Memo(0, "ERROR"))
+    }
+
+    var clickedDate by remember {
+        mutableStateOf(0)
+    }
+
     val checkList by db.checklistDao().getAll()
         .collectAsState(initial = emptyList())
 
@@ -142,6 +151,12 @@ fun CalendarApp(modifier: Modifier = Modifier) {
                 )
             }
         )
+
+        fun convertLocalDateToInt(dateModel: CalendarUiModel.Date): Int {
+            val date = dateModel.date
+            return date.year * 10000 + date.monthValue * 100 + date.dayOfMonth
+        }
+
         Content(data = calendarUiModel, onDateClickListener = { date ->
             calendarUiModel = calendarUiModel.copy(
                 selectedDate = date,
@@ -151,6 +166,8 @@ fun CalendarApp(modifier: Modifier = Modifier) {
                     )
                 }
             )
+
+            clickedDate = convertLocalDateToInt(calendarUiModel.selectedDate)
         })
         LazyColumn(
             modifier = Modifier
@@ -201,11 +218,16 @@ fun CalendarApp(modifier: Modifier = Modifier) {
             toolClick = memoClick,
             item = {
                 memoList.forEach { memo ->
-                    Text(text = memo.memo ?: "")
+                    //val memo_temp by db.memoDao().loadUid(1)
+                    //    .collectAsState(initial = Memo(0,"ERROR"))
 
+//                    val memo_temp = db.memoDao().loadUid(1)
+//
+//                    memo_temp?.memo
                 }
             },
             onClick = { memoScreen = !memoScreen })
+
         ToolsClick(toolClick = checklistClick, item = {
             checkList.forEach { checklist ->
                 Row {
@@ -271,8 +293,12 @@ fun CalendarApp(modifier: Modifier = Modifier) {
             }
         }
     }
-    //메모 수정하는 스크린
-    MemoScreen(db = db, memoScreen = memoScreen, memoList = memoList, scope = scope)
+
+    if(memoScreen)
+    {
+        //메모 수정하는 스크린
+        MemoScreen(db = db, memoScreen = memoScreen, memoList = memoList, scope = scope, clickedDate = clickedDate)
+    }
     //체크리스트 수정하는 스크린
     ChecklistScreen(
         db = db,
@@ -284,7 +310,8 @@ fun CalendarApp(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun MemoScreen(db: AppDatabase, memoScreen: Boolean, memoList: List<Memo>, scope: CoroutineScope) {
+fun MemoScreen(db: AppDatabase, memoScreen: Boolean, memoList: List<Memo>, scope: CoroutineScope, clickedDate:Int) {
+
     if (memoScreen) {
         Box(
             modifier = Modifier
@@ -300,35 +327,31 @@ fun MemoScreen(db: AppDatabase, memoScreen: Boolean, memoList: List<Memo>, scope
 
                 var isEditing by remember { mutableStateOf(false) }
 
+
                 Column {
-                    var savedMemo = memoList.firstOrNull()?.memo ?: ""
-                    var updatedMemo by remember {
-                        mutableStateOf(savedMemo)
+                    var updatedMemo by remember { mutableStateOf("") }
+                    var beforeEditMemo by remember { mutableStateOf("") }
+
+                    scope.launch(Dispatchers.IO) {
+                        val memo = db.memoDao().getMemoByUid(clickedDate)
+                        withContext(Dispatchers.Main) {
+                            beforeEditMemo = memo?.memo ?: ""
+                        }
                     }
-//                    val memoText = userList.joinToString("\n") { user -> user.memo ?: "" }
+
                     EditableTextComponent(
                         text = updatedMemo,
-                        savedtext = updatedMemo,
+                        savedtext = beforeEditMemo, // 여기를 수정했습니다.
                         isEditing = isEditing,
                         onTextChange = { newText -> updatedMemo = newText },
                         onEditToggle = { newValue -> isEditing = newValue },
                         onClick = {
-                            if (memoList.isEmpty()) {
-                                val newUser = Memo(memo = updatedMemo)
-                                scope.launch(Dispatchers.IO) {
-                                    db.memoDao().insertOrUpdateMemo(newUser)
-                                }
-                            } else {
-                                val userWithSavedMemo = memoList.find { it.memo == savedMemo }
-                                userWithSavedMemo?.let {
-                                    val updatedUser = it.copy(memo = updatedMemo)
-                                    scope.launch(Dispatchers.IO) {
-                                        db.memoDao().insertOrUpdateMemo(updatedUser)
-                                    }
-                                }
+
+                            scope.launch(Dispatchers.IO)
+                            {
+                                db.memoDao().insertOrUpdateMemo(clickedDate, updatedMemo)
                             }
                             isEditing = false
-
                         }
                     )
                 }
@@ -634,7 +657,6 @@ fun ContentItem(
     date: CalendarUiModel.Date,
     onClickListener: (CalendarUiModel.Date) -> Unit
 ) {
-
     val currentYearMonth = YearMonth.now()
     val textColor =
         if (date.date.year == currentYearMonth.year && date.date.month == currentYearMonth.month) {
